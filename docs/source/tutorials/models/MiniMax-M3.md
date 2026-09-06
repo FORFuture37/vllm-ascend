@@ -2,7 +2,7 @@
 
 ## 1 Introduction
 
-MiniMax-M3 is a multimodal large language model that supports text, image, and video inputs. On Ascend, it supports BF16 and W8A8 deployment, thinking mode, reasoning parsing, tool-call parsing, and multimodal inputs.
+MiniMax-M3 is a multimodal large language model that supports text, image, and video inputs. On Ascend, it supports BF16 and W8A8 on A2/A3, MXFP8 PD disaggregation on 950DT, thinking mode, reasoning parsing, tool-call parsing, and multimodal inputs.
 
 This document covers supported features, environment and model preparation, single-node deployment, multi-node deployment, PD separation, thinking and parser configuration, functional verification, accuracy evaluation, and troubleshooting.
 
@@ -18,8 +18,10 @@ Refer to the [Feature Guide](../../user_guide/feature_guide/index.md) for featur
 
 ### 3.1 Model Weight
 
-The `MiniMax-M3` BF16 model requires 16 × 64 GB NPU chips. [Download the model weights](https://www.modelscope.cn/collections/MiniMax/MiniMax-M3).
-We also provide `W8A8` quant model requires at least 8 x 64G NPU chips. [Download the model weights](https://www.modelscope.cn/models/Eco-Tech/MiniMax-M3-w8a8-0626)
+- `MiniMax-M3` (BF16): requires 16 × 64 GB NPU chips. [Download the model weights](https://www.modelscope.cn/collections/MiniMax/MiniMax-M3).
+- `MiniMax-M3-w8a8` (W8A8): requires at least 8 × 64 GB NPU chips. Recommended for Atlas 800 A3 (64GB × 16) and Atlas 800 A2 (64GB × 8). [Download the model weights](https://www.modelscope.cn/models/Eco-Tech/MiniMax-M3-w8a8-0626).
+- `MiniMax-M3-MXFP8` (MXFP8): used for Ascend 950DT (96GB × 8) PD disaggregation.
+
 It is recommended to place the model weight in a shared cache directory.
 
 ### 3.2 Verify Multi-node Communication (Optional)
@@ -32,82 +34,166 @@ For multi-node deployment, verify the communication environment by following [Ve
 
 You can use the official all-in-one Docker image. For the available image tags and published versions, refer to [Using Docker](../../getting_started/installation.md#installation-prebuilt-image).
 
-- Step 1: Download the latest Docker image
+=== "A3 series"
 
-  ```bash
-  docker pull quay.io/ascend/vllm-ascend:{{ vllm_ascend_version }}
-  ```
+    **Docker Run:**
 
-- Step 2: Start Docker container
+    ```bash
+    export IMAGE=quay.io/ascend/vllm-ascend:{{ vllm_ascend_version }}-a3
+    export NAME=vllm-ascend
 
-  ```bash
-  # Set the vLLM Ascend image name.
-  export IMAGE=quay.io/ascend/vllm-ascend:{{ vllm_ascend_version }}
-  export NAME=minimax-m3-dev
+    docker run --rm \
+        --name $NAME \
+        --net=host \
+        --shm-size=100g \
+        --device /dev/davinci0 \
+        --device /dev/davinci1 \
+        --device /dev/davinci2 \
+        --device /dev/davinci3 \
+        --device /dev/davinci4 \
+        --device /dev/davinci5 \
+        --device /dev/davinci6 \
+        --device /dev/davinci7 \
+        --device /dev/davinci8 \
+        --device /dev/davinci9 \
+        --device /dev/davinci10 \
+        --device /dev/davinci11 \
+        --device /dev/davinci12 \
+        --device /dev/davinci13 \
+        --device /dev/davinci14 \
+        --device /dev/davinci15 \
+        --device /dev/davinci_manager \
+        --device /dev/devmm_svm \
+        --device /dev/hisi_hdc \
+        -v /usr/local/dcmi:/usr/local/dcmi \
+        -v /usr/local/Ascend/driver/tools/hccn_tool:/usr/local/Ascend/driver/tools/hccn_tool \
+        -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+        -v /usr/local/Ascend/driver/lib64/:/usr/local/Ascend/driver/lib64/ \
+        -v /usr/local/Ascend/driver/version.info:/usr/local/Ascend/driver/version.info \
+        -v /etc/ascend_install.info:/etc/ascend_install.info \
+        -v /root/.cache:/root/.cache \
+        -it $IMAGE bash
+    ```
 
-  # Start the container with the variables defined above.
-  # Update --device for your hardware (Atlas A3: /dev/davinci[0-15]; Atlas A2: /dev/davinci[0-7]).
-  # If you use a Docker bridge network, open the ports required for multi-node communication in advance.
-  docker run --rm \
-  --name $NAME \
-  --net=host \
-  --shm-size=100g \
-  --device /dev/davinci0 \
-  --device /dev/davinci1 \
-  --device /dev/davinci2 \
-  --device /dev/davinci3 \
-  --device /dev/davinci4 \
-  --device /dev/davinci5 \
-  --device /dev/davinci6 \
-  --device /dev/davinci7 \
-  --device /dev/davinci8 \
-  --device /dev/davinci9 \
-  --device /dev/davinci10 \
-  --device /dev/davinci11 \
-  --device /dev/davinci12 \
-  --device /dev/davinci13 \
-  --device /dev/davinci14 \
-  --device /dev/davinci15 \
-  --device /dev/davinci_manager \
-  --device /dev/devmm_svm \
-  --device /dev/hisi_hdc \
-  -v /usr/local/dcmi:/usr/local/dcmi \
-  -v /usr/local/Ascend/driver/tools/hccn_tool:/usr/local/Ascend/driver/tools/hccn_tool \
-  -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
-  -v /usr/local/Ascend/driver/lib64/:/usr/local/Ascend/driver/lib64/ \
-  -v /usr/local/Ascend/driver/version.info:/usr/local/Ascend/driver/version.info \
-  -v /etc/ascend_install.info:/etc/ascend_install.info \
-  -v /root/.cache:/root/.cache \
-  -it $IMAGE bash
-  ```
+    !!! note
 
-- Step 3: compile Rust frontend
+        A3 has 8 NPUs with dual-die design (16 chips total: `/dev/davinci[0-15]`).
+        If you are on a shared machine, map only the chips you need (e.g., `/dev/davinci[0-7]` for NPU 0-3).
 
-  ```bash
-  cd /vllm-workspace/vllm
+=== "Ascend 950DT series"
 
-  # Install _rust_tool_parser for the Rust frontend.
-  pip install setuptools-rust
-  ./build_rust.sh
-  ```
+    **Docker Run:**
 
-- Step 4: Installation Verification:
+    ```bash
+    export IMAGE=quay.io/ascend/vllm-ascend:{{ vllm_ascend_version }}-950DT
+    export NAME=vllm-ascend
 
-  After starting the container, run the following command to verify the installation:
+    docker run --rm \
+        --name $NAME \
+        --net=host \
+        --shm-size=100g \
+        --device /dev/davinci0 \
+        --device /dev/davinci1 \
+        --device /dev/davinci2 \
+        --device /dev/davinci3 \
+        --device /dev/davinci4 \
+        --device /dev/davinci5 \
+        --device /dev/davinci6 \
+        --device /dev/davinci7 \
+        --device /dev/davinci_manager \
+        --device /dev/hisi_hdc \
+        --device /dev/ummu \
+        --device /dev/uburma \
+        -v /usr/local/Ascend/driver:/usr/local/Ascend/driver \
+        -v /etc/ascend_install.info:/etc/ascend_install.info \
+        -v /etc/hccl_rootinfo.json:/etc/hccl_rootinfo.json \
+        -v /etc/hixlep/:/etc/hixlep/ \
+        -v /root/.cache:/root/.cache \
+        -v /usr/local/sbin:/usr/local/sbin \
+        -v /usr/local/dcmi:/usr/local/dcmi \
+        -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+        -v /usr/local/sbin/npu-smi:/usr/local/sbin/npu-smi \
+        -v /usr/lib64:/usr/lib64 \
+        -it $IMAGE bash
+    ```
 
-  ```bash
-  docker ps | grep vllm-ascend-env
-  ```
+    !!! note
 
-  Expected result: The container is listed with status `Up`. You can also verify the vllm-ascend version inside the container:
+        Ascend 950DT has 8 NPUs (`/dev/davinci[0-7]`). Mount `/etc/hixlep/` for UBOE communication when using PD disaggregation.
 
-  ```bash
-  pip show vllm-ascend
-  ```
+=== "A2 series"
 
-  Expected result: The version information is displayed, matching the pulled image version.
+    **Docker Run:**
 
-## 5 Online Service Deployment {: #5-online-service-deployment }
+    ```bash
+    export IMAGE=quay.io/ascend/vllm-ascend:{{ vllm_ascend_version }}
+    export NAME=vllm-ascend
+
+    docker run --rm \
+        --name $NAME \
+        --net=host \
+        --shm-size=100g \
+        --device /dev/davinci0 \
+        --device /dev/davinci1 \
+        --device /dev/davinci2 \
+        --device /dev/davinci3 \
+        --device /dev/davinci4 \
+        --device /dev/davinci5 \
+        --device /dev/davinci6 \
+        --device /dev/davinci7 \
+        --device /dev/davinci_manager \
+        --device /dev/devmm_svm \
+        --device /dev/hisi_hdc \
+        -v /usr/local/dcmi:/usr/local/dcmi \
+        -v /usr/local/Ascend/driver/tools/hccn_tool:/usr/local/Ascend/driver/tools/hccn_tool \
+        -v /usr/local/bin/npu-smi:/usr/local/bin/npu-smi \
+        -v /usr/local/Ascend/driver/lib64/:/usr/local/Ascend/driver/lib64/ \
+        -v /usr/local/Ascend/driver/version.info:/usr/local/Ascend/driver/version.info \
+        -v /etc/ascend_install.info:/etc/ascend_install.info \
+        -v /root/.cache:/root/.cache \
+        -it $IMAGE bash
+    ```
+
+!!! tip
+    The mounts above are the minimum required for NPU driver access. Add additional `-v` mounts (e.g., model weight paths, datasets) as needed for your environment.
+
+The default workdir is `/workspace`. vLLM and vLLM-Ascend are installed as Python packages in site-packages.
+
+MiniMax-M3 needs the Rust frontend parser. After the container starts, run:
+
+```bash
+cd /vllm-workspace/vllm
+pip install setuptools-rust
+./build_rust.sh
+```
+
+**Installation Verification:**
+
+After starting the container, run the following command to verify the installation:
+
+```bash
+docker ps | grep vllm-ascend-env
+```
+
+Expected result: The container is listed with status `Up`. You can also verify the vllm-ascend version inside the container:
+
+```bash
+pip show vllm-ascend
+```
+
+Expected result: The version information is displayed, matching the pulled image version.
+
+### 4.2 Source Code Installation
+
+If you prefer to build from source instead of using the Docker image, install vLLM-Ascend following the [Installation Guide](../../getting_started/installation.md).
+
+To verify the source installation:
+
+```bash
+python -c "import vllm_ascend; print(vllm_ascend.__version__)"
+```
+
+## 5 Online Service Deployment
 
 Start the online serving service with the following command:
 
@@ -136,17 +222,7 @@ vllm serve ${WEIGHT_PATH} \
     --reasoning-parser minimax_m3 \
     --limit-mm-per-prompt '{"image":1,"video":0}' \
     --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
-    --additional-config '{
-        "enable_cpu_binding": true,
-        "ascend_compilation_config": {
-        "enable_static_kernel": true,
-        "fuse_norm_quant": false
-        },
-        "multistream_overlap_shared_expert": true,
-        "weight_nz_mode": 2,
-        "enable_flashcomm1": true,
-        "enable_reduce_sample": true
-    }' \
+    --additional-config '{"enable_cpu_binding":true,"ascend_compilation_config":{"enable_static_kernel":true,"fuse_norm_quant":false},"multistream_overlap_shared_expert":true,"weight_nz_mode":2,"enable_flashcomm1":true,"enable_reduce_sample":true}' \
     --port 11223 > ${LOG_PATH} 2>&1 &
 ```
 
@@ -173,18 +249,7 @@ vllm serve ${WEIGHT_PATH} \
     --limit-mm-per-prompt '{"image":1,"video":0}' \
     --speculative-config '{"model":"${EAGLE3_WEIGHT_PATH}", "method":"eagle3", "num_speculative_tokens":3}' \
     --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
-    --additional-config '{
-        "enable_cpu_binding": true,
-        "ascend_compilation_config": {
-            "enable_static_kernel": true,
-            "fuse_norm_quant": false
-        },
-        "multistream_overlap_shared_expert": true,
-        "enable_shared_expert_dp": true,
-        "weight_nz_mode": 2,
-        "enable_flashcomm1": true,
-        "enable_reduce_sample": true
-    }' \
+    --additional-config '{"enable_cpu_binding":true,"ascend_compilation_config":{"enable_static_kernel":true,"fuse_norm_quant":false},"multistream_overlap_shared_expert":true,"enable_shared_expert_dp":true,"weight_nz_mode":2,"enable_flashcomm1":true,"enable_reduce_sample":true}' \
     --port 11223 > ${LOG_PATH} 2>&1 &
 ```
 
@@ -348,179 +413,423 @@ vllm serve ${WEIGHT_PATH} \
     --port 11223 > ${LOG_PATH} 2>&1 &
 ```
 
-### 5.3 Multi-Node PD Separation Deployment
+### 5.3 Prefill-Decode Disaggregation
 
-PD (Prefill-Decode) separation splits the Prefill and Decode phases across different nodes for better throughput. The following 1P1D configuration is validated for `MiniMax-M3-MXFP8` with EAGLE3.
+PD disaggregation separates Prefill and Decode into different service groups. Prefill nodes process large prompt chunks, Decode nodes serve token generation, and a proxy forwards requests between them.
 
-**Hardware**: 2× 8-NPU nodes, one for Prefill (DP2TP4) and one for Decode (DP2TP4).
+Use Mooncake for deployment. Refer to [Mooncake](../features/pd_disaggregation_mooncake_multi_node.md) for the general PD disaggregation workflow.
 
-**Common Issues Tip:** For PD separation specific issues such as KV transfer timeouts or Mooncake connection errors, please refer to the [Public FAQs](../../faqs.md). For MiniMax-specific issues, refer to [Chapter 10 FAQ](#10-faq).
+Deploy `run_dp_template.sh` and `launch_online_dp.py` on the corresponding nodes, and deploy a proxy script on the prefill node to forward requests.
 
 First, prepare `launch_online_dp.py` on each node:
 
 [launch_online_dp.py](https://github.com/vllm-project/vllm-ascend/blob/main/examples/external_online_dp/launch_online_dp.py)
 
-Then prepare `run_dp_template.sh` on each node.
+`launch_online_dp.py` passes the visible devices, port, DP size, DP rank, DP address, DP RPC port, and TP size as `$1` through `$7`.
 
-**Prefill node** (set `nic_name` and `local_ip` to your own):
+**Common Issues Tip:** For PD disaggregation issues such as KV transfer timeouts or Mooncake connection errors, refer to the [Public FAQs](../../faqs.md). For MiniMax-specific issues, refer to [Chapter 10 FAQ](#10-faq).
 
-```bash
-unset http_proxy https_proxy ftp_proxy
+=== "A3 series"
 
-nic_name="<your_nic_name>"
-local_ip="<your_ip>"
+    **Hardware**: 2× Atlas 800I A3 (64GB × 16) for `MiniMax-M3-w8a8` with EAGLE3, one for Prefill and one for Decode.
 
-export HCCL_BUFFSIZE=1024
-export HCCL_IF_IP=$local_ip
-export HCCL_OP_EXPANSION_MODE="AIV"
-export HCCL_SOCKET_IFNAME=$nic_name
-export ASCEND_RT_VISIBLE_DEVICES=$1
+    - 1 Prefill node: 1 Atlas 800I A3 (64G x 16). Runs DP=2, TP=8.
+    - 1 Decode node: 1 Atlas 800I A3 (64G x 16). Runs DP=4, TP=4.
 
-export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages/mooncake:$LD_LIBRARY_PATH
-export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libjemalloc.so.2:$LD_PRELOAD
-export GLOO_SOCKET_IFNAME=$nic_name
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-export PYTHONHASHSEED=0
+    Prefill TP size must be divisible by Decode TP size. The layout above satisfies `8 % 4 == 0`.
 
-vllm serve /path/to/weight/MiniMax-M3-MXFP8 \
-    --host 0.0.0.0 \
-    --port $2 \
-    --data-parallel-size $3 \
-    --data-parallel-rank $4 \
-    --data-parallel-address $5 \
-    --data-parallel-rpc-port $6 \
-    --tensor-parallel-size $7 \
-    --enforce-eager \
-    --served-model-name minimax-m3 \
-    --enable-expert-parallel \
-    --seed 1024 \
-    --max-model-len 67560 \
-    --max-num-batched-tokens 32768 \
-    --long-prefill-token-threshold 2048 \
-    --trust-remote-code \
-    --gpu-memory-utilization 0.90 \
-    --reasoning-parser minimax_m3 \
-    --dtype bfloat16 \
-    --quantization mxfp8 \
-    --kv-cache-dtype fp8 \
-    --kv-cache-dtype-skip-layers 0 1 2 \
-    --additional-config '{"enable_cpu_binding":true, "ascend_compilation_config":{"fuse_qknorm_rope":false, "fuse_norm_quant":false, "enable_static_kernel":false}, "multistream_overlap_shared_expert":true, "enable_shared_expert_dp":true, "enable_reduce_sample":false}' \
-    --speculative-config '{"method":"eagle3", "model":"/path/to/weight/MiniMax-M3-EAGLE3", "num_speculative_tokens":3, "kv_cache_dtype":"bfloat16"}' \
-    --kv-transfer-config \
-        '{"kv_connector": "MooncakeConnectorV1",
+    #### Prefill Node
+
+    Create `run_dp_template.sh` on the prefill node. Set `nic_name` and `local_ip` to your own values.
+
+    ```bash
+    unset http_proxy https_proxy ftp_proxy
+
+    # Get these values through ifconfig.
+    # nic_name is the network interface name corresponding to local_ip.
+    nic_name="<your_nic_name>"
+    local_ip="<your_ip>"
+
+    export HCCL_BUFFSIZE=1024
+    export HCCL_IF_IP=$local_ip
+    export HCCL_OP_EXPANSION_MODE="AIV"
+    export HCCL_SOCKET_IFNAME=$nic_name
+    export ASCEND_RT_VISIBLE_DEVICES=$1
+
+    export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages/mooncake:$LD_LIBRARY_PATH
+    export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libjemalloc.so.2:$LD_PRELOAD
+    export GLOO_SOCKET_IFNAME=$nic_name
+    export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+    export PYTHONHASHSEED=0
+
+    vllm serve /path/to/weight/MiniMax-M3-w8a8 \
+        --host 0.0.0.0 \
+        --port $2 \
+        --data-parallel-size $3 \
+        --data-parallel-rank $4 \
+        --data-parallel-address $5 \
+        --data-parallel-rpc-port $6 \
+        --tensor-parallel-size $7 \
+        --enforce-eager \
+        --distributed-executor-backend mp \
+        --served-model-name minimax-m3 \
+        --enable-expert-parallel \
+        --seed 1024 \
+        --max-model-len 67560 \
+        --max-num-batched-tokens 32768 \
+        --long-prefill-token-threshold 2048 \
+        --trust-remote-code \
+        --gpu-memory-utilization 0.95 \
+        --reasoning-parser minimax_m3 \
+        --dtype bfloat16 \
+        --quantization ascend \
+        --additional-config '{"enable_cpu_binding":true, "ascend_compilation_config":{"enable_static_kernel":false, "fuse_norm_quant":false}, "multistream_overlap_shared_expert":true, "weight_nz_mode":2, "enable_shared_expert_dp":true, "enable_flashcomm1":true, "enable_reduce_sample":false}' \
+        --speculative-config '{"method":"eagle3", "model":"/path/to/weight/MiniMax-M3-EAGLE3", "num_speculative_tokens":3}' \
+        --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_producer","kv_port":"30000","engine_id":"0","kv_connector_extra_config":{"use_ascend_direct":true,"prefill":{"dp_size":2,"tp_size":8},"decode":{"dp_size":4,"tp_size":4}}}'
+    ```
+
+    Start the Prefill servers:
+
+    ```bash
+    python launch_online_dp.py \
+        --dp-size 2 --tp-size 8 \
+        --dp-size-local 2 --dp-rank-start 0 \
+        --dp-address <prefill_ip> --dp-rpc-port 6884 \
+        --vllm-start-port 31050
+    ```
+
+    This starts two Prefill API servers on ports `31050` and `31051`. `launch_online_dp.py` writes per-rank logs next to the template, such as `out_run_dp_template_rank0.log`. Wait until both ranks print `Application startup complete`.
+
+    Common Issues Tip: If the prefill service is not ready for a long time, check whether the model path is readable on the node, `ASCEND_RT_VISIBLE_DEVICES` covers 8 NPUs per DP rank, and the Mooncake `kv_port` is available.
+
+    #### Decode Node
+
+    Create `run_dp_template.sh` on the decode node.
+
+    ```bash
+    unset http_proxy https_proxy ftp_proxy
+
+    # Get these values through ifconfig.
+    # nic_name is the network interface name corresponding to local_ip.
+    nic_name="<your_nic_name>"
+    local_ip="<your_ip>"
+
+    export HCCL_BUFFSIZE=2048
+    export HCCL_IF_IP=$local_ip
+    export HCCL_OP_EXPANSION_MODE="AIV"
+    export HCCL_SOCKET_IFNAME=$nic_name
+    export ASCEND_RT_VISIBLE_DEVICES=$1
+
+    export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages/mooncake:$LD_LIBRARY_PATH
+    export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libjemalloc.so.2:$LD_PRELOAD
+    export GLOO_SOCKET_IFNAME=$nic_name
+    export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
+    export PYTHONHASHSEED=0
+
+    vllm serve /path/to/weight/MiniMax-M3-w8a8 \
+        --host 0.0.0.0 \
+        --port $2 \
+        --data-parallel-size $3 \
+        --data-parallel-rank $4 \
+        --data-parallel-address $5 \
+        --data-parallel-rpc-port $6 \
+        --tensor-parallel-size $7 \
+        --enable-expert-parallel \
+        --seed 1024 \
+        --served-model-name minimax-m3 \
+        --reasoning-parser minimax_m3 \
+        --distributed-executor-backend mp \
+        --max-model-len 67560 \
+        --max-num-batched-tokens 32768 \
+        --trust-remote-code \
+        --no-enable-prefix-caching \
+        --max-num-seqs 64 \
+        --gpu-memory-utilization 0.95 \
+        --dtype bfloat16 \
+        --quantization ascend \
+        --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
+        --speculative-config '{"method":"eagle3", "model":"/path/to/weight/MiniMax-M3-EAGLE3", "num_speculative_tokens":3}' \
+        --additional-config '{"enable_cpu_binding":true, "ascend_compilation_config":{"enable_static_kernel":false, "fuse_norm_quant":false}, "multistream_overlap_shared_expert":true, "weight_nz_mode":2, "enable_shared_expert_dp":true, "enable_flashcomm1":true, "enable_reduce_sample":false}' \
+        --kv-transfer-config '{"kv_connector":"MooncakeConnectorV1","kv_role":"kv_consumer","kv_port":"26900","engine_id":"1","kv_connector_extra_config":{"use_ascend_direct":true,"prefill":{"dp_size":2,"tp_size":8},"decode":{"dp_size":4,"tp_size":4}}}'
+    ```
+
+    Start the Decode servers:
+
+    ```bash
+    python launch_online_dp.py \
+        --dp-size 4 --tp-size 4 \
+        --dp-size-local 4 --dp-rank-start 0 \
+        --dp-address <decode_ip> --dp-rpc-port 5964 \
+        --vllm-start-port 31060
+    ```
+
+    This starts four Decode API servers on ports `31060` through `31063`.
+
+    Common Issues Tip: If the decode node fails to initialize, check that NPU memory from a previous run has been released, `--tensor-parallel-size` is 4, and `kv_connector_extra_config.decode.dp_size` is 4.
+
+    **A3 layout:** Prefill uses `--data-parallel-size 2` and `--tensor-parallel-size 8`. Decode uses `--data-parallel-size 4` and `--tensor-parallel-size 4`.
+
+=== "Ascend 950DT series"
+
+    **Hardware**: 2× Ascend 950DT (96GB × 8) for `MiniMax-M3-MXFP8` with EAGLE3, one for Prefill and one for Decode.
+
+    - 1 Prefill node: 1 Ascend 950DT (96G x 8). Runs DP=2, TP=4.
+    - 1 Decode node: 1 Ascend 950DT (96G x 8). Runs DP=2, TP=4.
+
+    Prefill TP size must be divisible by Decode TP size. The layout above satisfies `4 % 4 == 0`.
+
+    #### Prefill Node
+
+    Create `run_dp_template.sh` on the prefill node. Set `nic_name` and `local_ip` to your own values.
+
+    ```bash
+    unset ftp_proxy
+    unset https_proxy
+    unset http_proxy
+
+    # Get these values through ifconfig.
+    # nic_name is the network interface name corresponding to local_ip.
+    nic_name="<your_nic_name>"
+    local_ip="<your_ip>"
+
+    export HCCL_BUFFSIZE=1024
+    export HCCL_IF_IP=$local_ip
+    export HCCL_OP_EXPANSION_MODE="AIV"
+    export HCCL_SOCKET_IFNAME=$nic_name
+    export ASCEND_RT_VISIBLE_DEVICES=$1
+
+    export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/lib64:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages/mooncake:$LD_LIBRARY_PATH
+
+    export GLOO_SOCKET_IFNAME=$nic_name
+    export PYTORCH_NPU_ALLOC_CONF="expandable_segments:True"
+    export PYTHONHASHSEED=0
+
+    vllm serve /path/to/weight/MiniMax-M3-MXFP8 \
+      --host 0.0.0.0 \
+      --port $2 \
+      --data-parallel-size $3 \
+      --data-parallel-rank $4 \
+      --data-parallel-address $5 \
+      --data-parallel-rpc-port $6 \
+      --tensor-parallel-size $7 \
+      --enforce-eager \
+      --served-model-name minimax-m3 \
+      --enable-expert-parallel \
+      --seed 1024 \
+      --max-model-len 67560 \
+      --max-num-batched-tokens 32768 \
+      --long-prefill-token-threshold 2048 \
+      --trust-remote-code \
+      --gpu-memory-utilization 0.90 \
+      --reasoning-parser minimax_m3 \
+      --dtype bfloat16 \
+      --quantization mxfp8 \
+      --kv-cache-dtype fp8 \
+      --kv-cache-dtype-skip-layers 0 1 2 \
+      --additional-config '{
+        "enable_cpu_binding": true,
+        "ascend_compilation_config": {
+          "fuse_qknorm_rope": false,
+          "fuse_norm_quant": false,
+          "enable_static_kernel": false
+        },
+        "multistream_overlap_shared_expert": true,
+        "enable_shared_expert_dp": true,
+        "enable_reduce_sample": false
+      }' \
+      --speculative-config '{
+        "method": "eagle3",
+        "model": "/path/to/weight/MiniMax-M3-EAGLE3",
+        "num_speculative_tokens": 3,
+        "kv_cache_dtype": "bfloat16"
+      }' \
+      --kv-transfer-config '{
+        "kv_connector": "MooncakeConnectorV1",
         "kv_role": "kv_producer",
         "kv_port": "30000",
         "engine_id": "0",
         "kv_connector_extra_config": {
-             "use_ascend_direct": true,
-             "prefill": {"dp_size": 2, "tp_size": 4},
-             "decode":  {"dp_size": 2, "tp_size": 4}
-        }}'
-```
+          "use_ascend_direct": true,
+          "prefill": {"dp_size": 2, "tp_size": 4},
+          "decode": {"dp_size": 2, "tp_size": 4}
+        }
+      }'
+    ```
 
-**Decode node** (set `nic_name` and `local_ip` to your own):
+    Start the Prefill servers:
 
-```bash
-unset http_proxy https_proxy ftp_proxy
+    ```bash
+    python launch_online_dp.py \
+        --dp-size 2 --tp-size 4 \
+        --dp-size-local 2 --dp-rank-start 0 \
+        --dp-address <prefill_ip> --dp-rpc-port 6884 \
+        --vllm-start-port 31050
+    ```
 
-nic_name="<your_nic_name>"
-local_ip="<your_ip>"
+    This starts two Prefill API servers on ports `31050` and `31051`. Wait until both ranks print `Application startup complete`.
 
-export HCCL_BUFFSIZE=2048
-export HCCL_IF_IP=$local_ip
-export HCCL_OP_EXPANSION_MODE="AIV"
-export HCCL_SOCKET_IFNAME=$nic_name
-export ASCEND_RT_VISIBLE_DEVICES=$1
+    Common Issues Tip: If the prefill service is not ready for a long time, check whether `ASCEND_RT_VISIBLE_DEVICES` covers 4 NPUs per DP rank and the Mooncake `kv_port` is available.
 
-export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages/mooncake:$LD_LIBRARY_PATH
-export LD_PRELOAD=/usr/lib/aarch64-linux-gnu/libjemalloc.so.2:$LD_PRELOAD
-export GLOO_SOCKET_IFNAME=$nic_name
-export PYTORCH_NPU_ALLOC_CONF=expandable_segments:True
-export PYTHONHASHSEED=0
+    #### Decode Node
 
-vllm serve /path/to/weight/MiniMax-M3-MXFP8 \
-    --host 0.0.0.0 \
-    --port $2 \
-    --data-parallel-size $3 \
-    --data-parallel-rank $4 \
-    --data-parallel-address $5 \
-    --data-parallel-rpc-port $6 \
-    --tensor-parallel-size $7 \
-    --enable-expert-parallel \
-    --seed 1024 \
-    --served-model-name minimax-m3 \
-    --reasoning-parser minimax_m3 \
-    --distributed-executor-backend mp \
-    --max-model-len 67560 \
-    --max-num-batched-tokens 32768 \
-    --trust-remote-code \
-    --no-enable-prefix-caching \
-    --max-num-seqs 64 \
-    --gpu-memory-utilization 0.90 \
-    --dtype bfloat16 \
-    --quantization mxfp8 \
-    --kv-cache-dtype fp8 \
-    --kv-cache-dtype-skip-layers 0 1 2 \
-    --compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}' \
-    --speculative-config '{"method":"eagle3", "model":"/path/to/weight/MiniMax-M3-EAGLE3", "num_speculative_tokens":3, "kv_cache_dtype":"bfloat16"}' \
-    --additional-config '{"enable_cpu_binding":true, "ascend_compilation_config":{"enable_static_kernel":false, "fuse_norm_quant":false}, "multistream_overlap_shared_expert":true, "enable_shared_expert_dp":true, "enable_flashcomm1":false, "enable_reduce_sample":false}' \
-    --kv-transfer-config \
-        '{"kv_connector": "MooncakeConnectorV1",
+    Create `run_dp_template.sh` on the decode node.
+
+    ```bash
+    unset ftp_proxy
+    unset https_proxy
+    unset http_proxy
+
+    # Get these values through ifconfig.
+    # nic_name is the network interface name corresponding to local_ip.
+    nic_name="<your_nic_name>"
+    local_ip="<your_ip>"
+
+    export HCCL_BUFFSIZE=2048
+    export HCCL_IF_IP=$local_ip
+    export HCCL_OP_EXPANSION_MODE="AIV"
+    export HCCL_SOCKET_IFNAME=$nic_name
+    export ASCEND_RT_VISIBLE_DEVICES=$1
+
+    export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/lib64:$LD_LIBRARY_PATH
+    export LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages/mooncake:$LD_LIBRARY_PATH
+
+    export GLOO_SOCKET_IFNAME=$nic_name
+    export PYTORCH_NPU_ALLOC_CONF="expandable_segments:True"
+    export PYTHONHASHSEED=0
+
+    vllm serve /path/to/weight/MiniMax-M3-MXFP8 \
+      --host 0.0.0.0 \
+      --port $2 \
+      --data-parallel-size $3 \
+      --data-parallel-rank $4 \
+      --data-parallel-address $5 \
+      --data-parallel-rpc-port $6 \
+      --tensor-parallel-size $7 \
+      --enable-expert-parallel \
+      --seed 1024 \
+      --served-model-name minimax-m3 \
+      --reasoning-parser minimax_m3 \
+      --distributed-executor-backend mp \
+      --max-model-len 67560 \
+      --max-num-batched-tokens 32768 \
+      --trust-remote-code \
+      --no-enable-prefix-caching \
+      --max-num-seqs 64 \
+      --gpu-memory-utilization 0.90 \
+      --dtype bfloat16 \
+      --quantization mxfp8 \
+      --kv-cache-dtype fp8 \
+      --kv-cache-dtype-skip-layers 0 1 2 \
+      --compilation-config '{"cudagraph_mode": "FULL_DECODE_ONLY"}' \
+      --speculative-config '{"method":"eagle3","model":"/path/to/weight/MiniMax-M3-EAGLE3","num_speculative_tokens":3,"kv_cache_dtype": "bfloat16"}' \
+      --additional-config '{
+        "enable_cpu_binding": true,
+        "ascend_compilation_config": {
+          "enable_static_kernel": false,
+          "fuse_norm_quant": false
+        },
+        "multistream_overlap_shared_expert": true,
+        "enable_shared_expert_dp": true,
+        "enable_flashcomm1": false,
+        "enable_reduce_sample": false
+      }' \
+      --kv-transfer-config '{
+        "kv_connector": "MooncakeConnectorV1",
         "kv_role": "kv_consumer",
         "kv_port": "26900",
         "engine_id": "1",
         "kv_connector_extra_config": {
-             "use_ascend_direct": true,
-             "prefill": {"dp_size": 2, "tp_size": 4},
-             "decode":  {"dp_size": 2, "tp_size": 4}
-        }}'
-```
+          "use_ascend_direct": true,
+          "prefill": {"dp_size": 2, "tp_size": 4},
+          "decode": {"dp_size": 2, "tp_size": 4}
+        }
+      }'
+    ```
 
-Once the scripts are ready, start the servers on each node.
+    Start the Decode servers:
 
-**Prefill node:**
+    ```bash
+    python launch_online_dp.py \
+        --dp-size 2 --tp-size 4 \
+        --dp-size-local 2 --dp-rank-start 0 \
+        --dp-address <decode_ip> --dp-rpc-port 5964 \
+        --vllm-start-port 31060
+    ```
 
-```bash
-python launch_online_dp.py \
-    --dp-size 2 --tp-size 4 \
-    --dp-size-local 2 --dp-rank-start 0 \
-    --dp-address <prefill_ip> --dp-rpc-port 6884 \
-    --vllm-start-port 31050
-```
+    This starts two Decode API servers on ports `31060` and `31061`.
 
-**Decode node:**
+    Common Issues Tip: If the decode node fails to initialize, check that `--tensor-parallel-size` is 4 and `kv_connector_extra_config.decode.dp_size` is 2.
 
-```bash
-python launch_online_dp.py \
-    --dp-size 2 --tp-size 4 \
-    --dp-size-local 2 --dp-rank-start 0 \
-    --dp-address <decode_ip> --dp-rpc-port 5964 \
-    --vllm-start-port 31060
-```
+    **950DT layout:** Prefill and Decode both use `--data-parallel-size 2` and `--tensor-parallel-size 4`.
 
-#### Request Forwarding
+**Key parameters for PD disaggregation:**
 
-Run the proxy on any machine that can reach both nodes. You can get the proxy script from the repository: [load_balance_proxy_server_example.py](https://github.com/vllm-project/vllm-ascend/blob/main/examples/disaggregated_prefill_v1/load_balance_proxy_server_example.py).
+- `launch_online_dp.py` starts one `vllm serve` process per local DP rank and sets `ASCEND_RT_VISIBLE_DEVICES` to a TP-sized slice of the node.
+- `--data-parallel-address` and `--data-parallel-rpc-port` define the DP control plane on each node.
+- `--distributed-executor-backend mp` uses multiprocessing for the local TP workers.
+- `--kv-transfer-config` sets the Mooncake connector. `kv_role` is `kv_producer` on prefill and `kv_consumer` on decode.
+- `kv_connector_extra_config.prefill.dp_size/tp_size` and `decode.dp_size/tp_size` must match the actual global DP and TP layout on both nodes.
+- Prefill TP size must be divisible by Decode TP size.
+- `--no-enable-prefix-caching` disables prefix caching. For PD disaggregation, the D-node prefix-cache known issue is tracked in [#7944](https://github.com/vllm-project/vllm-ascend/issues/7944).
+- `--compilation-config '{"cudagraph_mode":"FULL_DECODE_ONLY"}'` is recommended on the decode node to reduce decode dispatch overhead.
+- `--enforce-eager` is used on the prefill node.
 
-```bash
-unset http_proxy https_proxy
+### 5.4 Request Forwarding
 
-python load_balance_proxy_server_example.py \
-    --port 8009 \
-    --host <prefill_ip> \
-    --prefiller-hosts \
-       <prefill_ip> <prefill_ip> \
-    --prefiller-ports \
-       31050 31051 \
-    --decoder-hosts \
-       <decode_ip> <decode_ip> \
-    --decoder-ports \
-       31060 31061
-```
+Run a proxy server on a node that can reach all Prefill and Decode API ports. You can get the proxy program from the repository: [load_balance_proxy_server_example.py](https://github.com/vllm-project/vllm-ascend/blob/main/examples/disaggregated_prefill_v1/load_balance_proxy_server_example.py).
 
-The service is then accessible at `http://<proxy_ip>:8009`.
+Wait until every Prefill and Decode rank prints `Application startup complete` before starting the proxy.
 
-### 5.4 Multimodal and ViT DP (Optional)
+=== "A3 series"
+
+    For A3 PD disaggregation (1P1D), the proxy forwards requests to 2 Prefill ranks and 4 Decode ranks.
+
+    ```bash
+    unset ftp_proxy
+    unset https_proxy
+    unset http_proxy
+
+    python load_balance_proxy_server_example.py \
+        --port 8009 \
+        --host 0.0.0.0 \
+        --prefiller-hosts \
+           <prefill_ip> <prefill_ip> \
+        --prefiller-ports \
+           31050 31051 \
+        --decoder-hosts \
+           <decode_ip> <decode_ip> <decode_ip> <decode_ip> \
+        --decoder-ports \
+           31060 31061 31062 31063
+    ```
+
+=== "Ascend 950DT series"
+
+    For Ascend 950DT PD disaggregation (1P1D), the proxy forwards requests to 2 Prefill ranks and 2 Decode ranks.
+
+    ```bash
+    unset ftp_proxy
+    unset https_proxy
+    unset http_proxy
+
+    python load_balance_proxy_server_example.py \
+        --port 8009 \
+        --host 0.0.0.0 \
+        --prefiller-hosts \
+           <prefill_ip> <prefill_ip> \
+        --prefiller-ports \
+           31050 31051 \
+        --decoder-hosts \
+           <decode_ip> <decode_ip> \
+        --decoder-ports \
+           31060 31061
+    ```
+
+The service is then accessible at `http://<proxy_ip>:8009`. For PD disaggregation, use this proxy endpoint in Section 6.
+
+Common Issues Tip: If requests reach the proxy but no output is returned, check that the proxy host list includes every healthy Prefill and Decode port, and that both nodes still have free NPU memory after the previous run.
+
+### 5.5 Multimodal and ViT DP (Optional)
 
 MiniMax-M3 supports image and video inputs on Ascend. The deployment examples above keep `--limit-mm-per-prompt '{"image":1,"video":0}'` as the default multimodal capacity assumption because the other serving parameters are tuned for the single-image path.
 
@@ -570,11 +879,13 @@ FLASHCOMM1 and language-model-only mode should not be enabled at the same time f
 
 MiniMax-M3 supports three thinking modes, controlled via `thinking_mode` in `chat_template_kwargs`:
 
-| Mode | Behavior | Use Case |
-|------|----------|----------|
-| `enabled` | The model thinks before every response, including after tool results | Complex reasoning, agents |
-| `disabled` | No thinking; the model answers directly | Latency-sensitive turns |
-| `adaptive` | The model decides whether to think based on the task (default when unset) | General use |
+
+| Mode       | Behavior                                                                  | Use Case                  |
+| ---------- | ------------------------------------------------------------------------- | ------------------------- |
+| `enabled`  | The model thinks before every response, including after tool results      | Complex reasoning, agents |
+| `disabled` | No thinking; the model answers directly                                   | Latency-sensitive turns   |
+| `adaptive` | The model decides whether to think based on the task (default when unset) | General use               |
+
 
 #### 6.1.1 Request Examples
 
@@ -638,8 +949,8 @@ MiniMax-M3 uses explicit thinking delimiters:
 
 #### 6.2.3 Parser Behavior
 
-- **`thinking_mode="enabled"`**: The chat template pre-fills `<mm:think>` in the prompt. Generated text starts inside the reasoning block and transitions to content after `</mm:think>`.
-- **`thinking_mode="disabled"` or default**: Model output is treated as plain content. If `<mm:think>` appears, the parser splits on the delimiters.
+- `**thinking_mode="enabled"**`: The chat template pre-fills `<mm:think>` in the prompt. Generated text starts inside the reasoning block and transitions to content after `</mm:think>`.
+- `**thinking_mode="disabled"` or default**: Model output is treated as plain content. If `<mm:think>` appears, the parser splits on the delimiters.
 - **Streaming**: Reasoning and content are streamed incrementally via `DeltaMessage.reasoning` and `DeltaMessage.content` token-by-token.
 - **Token counting**: Reasoning tokens inside `<mm:think>` blocks are correctly counted.
 
@@ -721,112 +1032,19 @@ curl http://{ip}:{port}/v1/chat/completions \
 
 ### 7.1 Text
 
-  ```bash
-  curl http://{ip}:{port}/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d @- <<EOF
-  {
-    "model": "minimax-m3",
-    "messages": [
-      {
-        "role": "user",
-        "content": "Answer the following multiple choice question. The last line of your response should be of the following format: 'Answer: LETTER' (without quotes) where LETTER is one of ABCD. Think step by step before answering.\n\nA student regrets that he fell asleep during a lecture in electrochemistry, facing the following incomplete statement in a test:\nThermodynamically, oxygen is a …… oxidant in basic solutions. Kinetically, oxygen reacts …… in acidic solutions.\nWhich combination of weaker/stronger and faster/slower is correct?\n\nA) weaker – faster\nB) stronger – faster\nC) weaker - slower\nD) stronger – slower"
-      }
-    ],
-    "max_tokens": 8000,
-    "temperature": 1.0
-  }
-  EOF
-  ```
-
   Expected result: the answer is C.
 
 ### 7.2 Single Image
 
   Start the service with image input enabled, for example `--limit-mm-per-prompt '{"image":1,"video":0}'`. Replace `${IMAGE_PATH}` with a local image path on the client side.
 
-  ```bash
-  IMAGE_PATH=/path/to/image.jpg
-  IMAGE_BASE64="$(base64 -w 0 "${IMAGE_PATH}")"
-
-  curl http://{ip}:{port}/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d @- <<EOF
-  {
-    "model": "minimax-m3",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,${IMAGE_BASE64}"}},
-          {"type": "text", "text": "Briefly describe this image."}
-        ]
-      }
-    ],
-    "max_tokens": 512,
-    "temperature": 0
-  }
-  EOF
-  ```
-
 ### 7.3 Single Video
 
   Start the service with video input enabled, for example `--limit-mm-per-prompt '{"image":0,"video":1}'`. If the request uses `file://` local video paths, also add `--allowed-local-media-path /` or a narrower allowed directory. If `media_io_kwargs.video.num_frames` is not specified, vLLM samples 32 frames by default.
 
-  ```bash
-  curl http://{ip}:{port}/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{
-      "model": "minimax-m3",
-      "messages": [
-        {
-          "role": "user",
-          "content": [
-            {
-              "type": "video_url",
-              "video_url": {
-                "url": "file:///path/to/video.mp4"
-              }
-            },
-            {
-              "type": "text",
-              "text": "Briefly describe the main content of this video."
-            }
-          ]
-        }
-      ],
-      "max_tokens": 512,
-      "temperature": 0
-    }'
-  ```
-
 ### 7.4 Mixed Image and Video Request
 
   Start the service with both image and video input enabled. For the following request, use `--limit-mm-per-prompt '{"image":1,"video":1}'`. If the request uses `file://` local video paths, also add `--allowed-local-media-path /` or a narrower allowed directory.
-
-  ```bash
-  IMAGE_BASE64="$(base64 -w 0 /path/to/image.jpg)"
-
-  curl http://{ip}:{port}/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d @- <<EOF
-  {
-    "model": "minimax-m3",
-    "messages": [
-      {
-        "role": "user",
-        "content": [
-          {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,${IMAGE_BASE64}"}},
-          {"type": "video_url", "video_url": {"url": "file:///path/to/video.mp4"}},
-          {"type": "text", "text": "Describe the image and video separately, and explain whether they are related."}
-        ]
-      }
-    ],
-    "max_tokens": 512,
-    "temperature": 0
-  }
-  EOF
-  ```
 
 ## 8 Accuracy Evaluation
 
@@ -836,14 +1054,16 @@ For detailed instructions, refer to [Using AISBench for accuracy evaluation](../
 
 ### 8.2 Text Evaluation
 
-| Dataset | Hardware | Score | max-model-len | max-num-seqs | max_out_len | batch_size | generation_kwargs |
-|---------|----------|-------|---------------|--------------|-------------|------------|-------------------|
-| GSM8K   | GPU      | 96.72 | 65536         | 16           | 49152       | 16         | temperature=1.0, top_p=0.95 |
-| GSM8K   | NPU      | 96.36 | 10240         | 16           | 9500        | 20         | temperature=1.0, top_p=0.95 |
-| AIME2025 | GPU     | 95@repeat4 | -        | -            | -           | -          | -                 |
-| AIME2025 | NPU     | 93.3@repeat2    | 131072        | 32         | 65536           | 8         | temperature=1.0, top_p=0.95 |
-| GPQA-Diamond | GPU     | 92.42    | 81920      | 64        | 75776       | 8       | temperature=0.6, top_p=0.95 |
-| GPQA-Diamond | NPU     | 92.42    | 131072      | 32        | 65536       | 8       | temperature=0.6, top_p=0.95 |
+
+| Dataset      | Hardware | Score        | max-model-len | max-num-seqs | max_out_len | batch_size | generation_kwargs           |
+| ------------ | -------- | ------------ | ------------- | ------------ | ----------- | ---------- | --------------------------- |
+| GSM8K        | GPU      | 96.72        | 65536         | 16           | 49152       | 16         | temperature=1.0, top_p=0.95 |
+| GSM8K        | NPU      | 96.36        | 10240         | 16           | 9500        | 20         | temperature=1.0, top_p=0.95 |
+| AIME2025     | GPU      | 95@repeat4   | -             | -            | -           | -          | -                           |
+| AIME2025     | NPU      | 93.3@repeat2 | 131072        | 32           | 65536       | 8          | temperature=1.0, top_p=0.95 |
+| GPQA-Diamond | GPU      | 92.42        | 81920         | 64           | 75776       | 8          | temperature=0.6, top_p=0.95 |
+| GPQA-Diamond | NPU      | 92.42        | 131072        | 32           | 65536       | 8          | temperature=0.6, top_p=0.95 |
+
 
 ### 8.3 Multimodal Evaluation
 
@@ -871,12 +1091,14 @@ ais_bench \
 
 `videomme_subset_1_2.py` is a local AISBench dataset config derived from the original Video-MME config, such as `videomme_gen.py`. It points `path` to the parquet file filtered from the full Video-MME metadata by the locally available chunk1/chunk2 videos, and points `video_path` to the extracted chunk1/chunk2 `.mp4` directory. This keeps the evaluation lightweight while preserving the standard Video-MME request and scoring flow.
 
-| Dataset | Modality | Tool | Hardware | ViT DP | max-model-len | max_out_len | Input Config | generation_kwargs | Score |
-|---------|----------|------|----------|--------|---------------|-------------|--------------|-------------------|-------|
-| TextVQA | Image | AISBench | GPU | disabled | 65536 | 512 | `--limit-mm-per-prompt '{"image":1,"video":0}'` | temperature=1.0, top_p=0.95 | 70.82 |
-| TextVQA | Image | AISBench | NPU | disabled | 65536 | 512 | `--limit-mm-per-prompt '{"image":1,"video":0}'` | temperature=1.0, top_p=0.95 | 72.75 |
-| Video-MME chunk1+chunk2 | Video | AISBench | GPU | - | 90112 | 8192 | `--limit-mm-per-prompt '{"image":0,"video":1}'`, default 32 frames | temperature=1.0, top_p=0.95 | 73.41 |
-| Video-MME chunk1+chunk2 | Video | AISBench | NPU | - | 90112 | 8192 | `--limit-mm-per-prompt '{"image":0,"video":1}'`, default 32 frames | temperature=1.0, top_p=0.95 | 74.21 |
+
+| Dataset                 | Modality | Tool     | Hardware | ViT DP   | max-model-len | max_out_len | Input Config                                                       | generation_kwargs           | Score |
+| ----------------------- | -------- | -------- | -------- | -------- | ------------- | ----------- | ------------------------------------------------------------------ | --------------------------- | ----- |
+| TextVQA                 | Image    | AISBench | GPU      | disabled | 65536         | 512         | `--limit-mm-per-prompt '{"image":1,"video":0}'`                    | temperature=1.0, top_p=0.95 | 70.82 |
+| TextVQA                 | Image    | AISBench | NPU      | disabled | 65536         | 512         | `--limit-mm-per-prompt '{"image":1,"video":0}'`                    | temperature=1.0, top_p=0.95 | 72.75 |
+| Video-MME chunk1+chunk2 | Video    | AISBench | GPU      | -        | 90112         | 8192        | `--limit-mm-per-prompt '{"image":0,"video":1}'`, default 32 frames | temperature=1.0, top_p=0.95 | 73.41 |
+| Video-MME chunk1+chunk2 | Video    | AISBench | NPU      | -        | 90112         | 8192        | `--limit-mm-per-prompt '{"image":0,"video":1}'`, default 32 frames | temperature=1.0, top_p=0.95 | 74.21 |
+
 
 ## 9 Performance Tuning
 
@@ -896,24 +1118,25 @@ Please refer to the [Feature Matrix](../../user_guide/support_matrix/feature_mat
 
 ## 10 FAQ
 
-- **Q: How can I reinstall vLLM Ascend?**
+**Q: How can I reinstall vLLM Ascend?**
 
-  A: Use the following command to reinstall vLLM Ascend and build it with the dependencies from the current Python environment:
+Use the following command to reinstall vLLM Ascend and build it with the dependencies from the current Python environment:
 
-  ```bash
-  pip install -v --no-build-isolation -e . -i http://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com
-  ```
+```bash
+pip install -v --no-build-isolation -e . -i http://mirrors.aliyun.com/pypi/simple --trusted-host mirrors.aliyun.com
+```
 
-- **Q: What should I do if a video request is slow or times out when `media_io_kwargs.video.num_frames` is not set?**
+**Q: What should I do if a video request is slow or times out when `media_io_kwargs.video.num_frames` is not set?**
 
-  A: By default, vLLM samples 32 frames when reading a video. MiniMax-M3 produces many visual tokens per frame, so a 32-frame video significantly increases prefill computation. If the request is slow or times out, explicitly set `media_io_kwargs.video.num_frames` to a smaller value, such as 8 or 16 frames:
+By default, vLLM samples 32 frames when reading a video. MiniMax-M3 produces many visual tokens per frame, so a 32-frame video significantly increases prefill computation. If the request is slow or times out, explicitly set `media_io_kwargs.video.num_frames` to a smaller value, such as 8 or 16 frames:
 
-  ```json
-  {
-    "media_io_kwargs": {
-      "video": {
-        "num_frames": 8
-      }
+```json
+{
+  "media_io_kwargs": {
+    "video": {
+      "num_frames": 8
     }
   }
-  ```
+}
+```
+
