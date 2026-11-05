@@ -1914,10 +1914,12 @@
 #    Why:
 #       Reduce ViT mRoPE setup UB pressure on Ascend A5.
 #    How:
-#       Copy the upstream vit_mrope_setup wrapper and change BLOCK_N from 32
-#       to 16, using the same value for the launch grid divisor. Keep the
-#       upstream kernel unchanged. Rebind the MiniMax vision tower alias if
-#       it is already loaded; subsequent imports use the patched wrapper.
+#       Copy the upstream vit_mrope_setup wrapper. Keep BLOCK_N at 16 when
+#       BLOCK_D is 64 or smaller, and shrink BLOCK_N so BLOCK_N * BLOCK_D
+#       stays within 1024 elements for larger rotary dims. Use that BLOCK_N
+#       as the launch grid divisor. Keep the upstream kernel unchanged.
+#       Rebind the MiniMax vision tower alias if it is already loaded;
+#       subsequent imports use the patched wrapper.
 #    Related PR (if no, explain why):
 #       https://github.com/vllm-project/vllm/pull/58526
 #       https://github.com/vllm-project/vllm/pull/58673
