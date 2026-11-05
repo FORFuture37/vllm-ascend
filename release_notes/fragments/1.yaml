@@ -1,0 +1,6 @@
+pr: 1
+entries:
+  - category: bugfix
+    text: Fixed a remaining MiniMax-M3 ViT mRoPE setup UB overflow on Ascend A5 by compiling the kernel once and shrinking BLOCK_N when the rotary width exceeds the 16-by-64 tile.
+    model: minimax-m3
+    hardware: [A5]
