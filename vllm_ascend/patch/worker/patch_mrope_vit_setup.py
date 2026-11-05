@@ -9,6 +9,14 @@ from vllm.model_executor.layers.rotary_embedding.mrope_vit_setup import _vit_mro
 from vllm.triton_utils import triton
 from vllm.utils.torch_utils import async_tensor_h2d
 
+# Upstream launches BLOCK_N=32. On Ascend A5 that fp32 cos/sin tile overflows
+# UB once BLOCK_D is 64, which is the MiniMax ViT half-rot. 16 * 64 is the
+# largest tile that compiles there. Larger BLOCK_D uses a smaller BLOCK_N so
+# the product stays inside that budget. num_warps stays at the upstream value.
+_ASCEND_MAX_BLOCK_N = 16
+_ASCEND_UB_TILE_ELEMENTS = _ASCEND_MAX_BLOCK_N * 64
+_ASCEND_NUM_WARPS = 8
+
 
 def vit_mrope_setup(
     inv_freq_t: torch.Tensor,
@@ -49,7 +57,8 @@ def vit_mrope_setup(
     half_rot = half_t + half_h + half_w
     cos = torch.empty(3, n, half_rot, device=device, dtype=torch.float32)
     sin = torch.empty(3, n, half_rot, device=device, dtype=torch.float32)
-    block_n = 16
+    block_d = triton.next_power_of_2(half_rot)
+    block_n = min(_ASCEND_MAX_BLOCK_N, max(1, _ASCEND_UB_TILE_ELEMENTS // block_d))
     _vit_mrope_setup_kernel[(triton.cdiv(n, block_n),)](
         inv_freq_t,
         inv_freq_h,
@@ -65,8 +74,8 @@ def vit_mrope_setup(
         half_w=half_w,
         spatial_merge=spatial_merge_size,
         BLOCK_N=block_n,
-        BLOCK_D=triton.next_power_of_2(half_rot),
-        num_warps=8,
+        BLOCK_D=block_d,
+        num_warps=_ASCEND_NUM_WARPS,
     )
     return cos, sin
 
