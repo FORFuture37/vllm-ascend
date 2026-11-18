@@ -1,0 +1,4 @@
+pr: 2
+entries:
+  - category: bugfix
+    text: Fixed Memcache layerwise saves publishing keys for recycled sliding-window KV cache blocks.
